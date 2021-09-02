@@ -38,6 +38,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/server/api/adminservice/v1"
+	"go.temporal.io/server/common/persistence/sql"
 	esclient "go.temporal.io/server/common/persistence/visibility/elasticsearch/client"
 	"go.temporal.io/server/common/searchattribute"
 
@@ -171,13 +172,15 @@ func describeMutableState(c *cli.Context) *adminservice.DescribeMutableStateResp
 	ctx, cancel := newContext(c)
 	defer cancel()
 
-	resp, err := adminClient.DescribeMutableState(ctx, &adminservice.DescribeMutableStateRequest{
+	req := &adminservice.DescribeMutableStateRequest{
 		Namespace: namespace,
 		Execution: &commonpb.WorkflowExecution{
 			WorkflowId: wid,
 			RunId:      rid,
 		},
-	})
+	}
+
+	resp, err := adminClient.DescribeMutableState(ctx, req)
 	if err != nil {
 		ErrorAndExit("Get workflow mutableState failed", err)
 	}
@@ -218,9 +221,8 @@ func AdminDeleteWorkflow(c *cli.Context) {
 	namespaceID := resp.GetDatabaseMutableState().GetExecutionInfo().GetNamespaceId()
 	runID := resp.GetDatabaseMutableState().GetExecutionState().GetRunId()
 
-	adminDeleteVisibilityDocument(c, namespaceID)
+	// adminDeleteVisibilityDocument(c, namespaceID)
 
-	session := connectToCassandra(c)
 	shardID := resp.GetShardId()
 	shardIDInt, err := strconv.Atoi(shardID)
 	if err != nil {
@@ -233,6 +235,11 @@ func AdminDeleteWorkflow(c *cli.Context) {
 		branchTokens = append(branchTokens, historyItem.GetBranchToken())
 	}
 
+	dbCfg, err := CreateDefaultDBConfig(c)
+	if err != nil {
+		ErrorAndExit("Unable to create DB config.", err)
+	}
+
 	for _, branchToken := range branchTokens {
 		branchInfo, err := serialization.HistoryBranchFromBlob(branchToken, enumspb.ENCODING_TYPE_PROTO3.String())
 		if err != nil {
@@ -240,7 +247,19 @@ func AdminDeleteWorkflow(c *cli.Context) {
 		}
 		fmt.Println("Deleting history events for:")
 		prettyPrintJSONObject(branchInfo)
-		execStore := cassandra.NewExecutionStore(session, log.NewNoopLogger())
+
+		factory := sql.NewFactory(
+			*dbCfg.SQL,
+			resolver.NewNoopResolver(),
+			c.String(FlagTargetCluster),
+			log.NewNoopLogger(),
+		)
+
+		execStore, err := factory.NewExecutionStore()
+		if err != nil {
+			ErrorAndExit("New exec store error.", err)
+		}
+
 		execMgr := persistence.NewExecutionManager(execStore, log.NewNoopLogger(), dynamicconfig.GetIntPropertyFn(common.DefaultTransactionSizeLimit))
 		err = execMgr.DeleteHistoryBranch(&persistence.DeleteHistoryBranchRequest{
 			BranchToken: branchToken,
@@ -255,7 +274,18 @@ func AdminDeleteWorkflow(c *cli.Context) {
 		}
 	}
 
-	exeStore := cassandra.NewExecutionStore(session, log.NewNoopLogger())
+	factory := sql.NewFactory(
+		*dbCfg.SQL,
+		resolver.NewNoopResolver(),
+		c.String(FlagTargetCluster),
+		log.NewNoopLogger(),
+	)
+
+	exeStore, err := factory.NewExecutionStore()
+	if err != nil {
+		ErrorAndExit("New exec store error.", err)
+	}
+
 	req := &persistence.DeleteWorkflowExecutionRequest{
 		ShardID:     int32(shardIDInt),
 		NamespaceID: namespaceID,
@@ -289,6 +319,9 @@ func AdminDeleteWorkflow(c *cli.Context) {
 	} else {
 		fmt.Printf("DeleteCurrentWorkflowExecution for RunID=%s executed successfully.\n", runID)
 	}
+
+	factory.Close()
+	exeStore.Close()
 }
 
 func adminDeleteVisibilityDocument(c *cli.Context, namespaceID string) {

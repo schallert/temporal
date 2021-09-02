@@ -305,6 +305,7 @@ func (s *visibilityStore) DeleteWorkflowExecution(
 ) error {
 	ctx, cancel := newVisibilityContext()
 	defer cancel()
+
 	_, err := s.sqlStore.Db.DeleteFromVisibility(ctx, sqlplugin.VisibilityDeleteFilter{
 		NamespaceID: request.NamespaceID,
 		RunID:       request.RunID,

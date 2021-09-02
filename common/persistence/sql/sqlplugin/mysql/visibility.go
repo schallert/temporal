@@ -81,12 +81,12 @@ const (
 
 	templateGetClosedWorkflowExecutionsByStatus = templateClosedSelect + `AND status = ?` + templateConditionsClosedWorkflows
 
-	templateGetClosedWorkflowExecution = `SELECT workflow_id, run_id, start_time, execution_time, memo, encoding, close_time, workflow_type_name, status, history_length 
+	templateGetClosedWorkflowExecution = `SELECT workflow_id, run_id, start_time, execution_time, memo, encoding, close_time, workflow_type_name, status, history_length
 		 FROM executions_visibility
 		 WHERE namespace_id = ? AND status != 1
 		 AND run_id = ?`
 
-	templateDeleteWorkflowExecution = "DELETE FROM executions_visibility WHERE namespace_id = ? AND run_id = ?"
+	templateDeleteWorkflowExecution = "DELETE FROM temporal_visibility.executions_visibility WHERE namespace_id = ? AND run_id = ?"
 )
 
 var errCloseParams = errors.New("missing one of {CloseTime, HistoryLength} params")
